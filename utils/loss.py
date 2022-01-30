@@ -206,17 +206,44 @@ class ComputeLoss:
                 offsets = 0
 
             # Define
+            a = t[:, -1].long()  # anchor indices
             b, c = t[:, :2].long().T  # image, class
             gxy = t[:, 2:4]  # grid xy
             gwh = t[:, 4:6]  # grid wh
             gij = (gxy - offsets).long()
+            if len(gij) > 0:
+                gij[0].clamp_(0, gain[2] - 1)
+                gij[1].clamp_(0, gain[3] - 1)
+
+            # Remove duplicated
+            numel = torch.tensor(p[i][0, ..., :1].shape[::-1]).cumprod(0)
+            position = b * numel[3] + a * numel[2] + gij[:, 1] * numel[1] + gij[:, 0] * numel[0]
+            unique, counts = torch.unique(position, return_counts=True)
+            conflict = unique[counts > 1]
+            conflict_cond = (position[..., None] == conflict).any(1)
+            uid = torch.where(~conflict_cond)[0].tolist()  # unique indices
+            cid = torch.where(conflict_cond)[0]  # conflict indices
+
+            if len(cid) > 0:
+                conflict_pos = position[cid]
+                ganch = torch.cat((gij[cid], anchors[a[cid]]), dim=1)
+                gbox = torch.cat((gxy[cid], gwh[cid]), dim=1)
+                iou = bbox_iou(gbox.T, ganch, x1y1x2y2=False, CIoU=True)
+                si = torch.argsort(iou)
+                conflict_pos, cid = conflict_pos[si], cid[si]
+                collapse = {}
+                for pos, ind in zip(conflict_pos.tolist(), cid.tolist()):
+                    collapse[pos] = ind
+                resolve_indices = list(collapse.values())
+                uid += resolve_indices
+
+            a, b, c, gxy, gwh, gij = a[uid], b[uid], c[uid], gxy[uid], gwh[uid], \
+                                     gij[uid]
             gi, gj = gij.T  # grid xy indices
 
             # Append
-            a = t[:, 6].long()  # anchor indices
-            indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
+            indices.append((b, a, gj, gi))  # image, anchor, grid indices
             tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
             anch.append(anchors[a])  # anchors
             tcls.append(c)  # class
-
         return tcls, tbox, indices, anch

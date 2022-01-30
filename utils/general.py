@@ -138,7 +138,7 @@ def init_seeds(seed=0):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    cudnn.benchmark, cudnn.deterministic = (False, True) if seed == 0 else (True, False)
+    cudnn.benchmark, cudnn.deterministic = False, True
 
 
 def intersect_dicts(da, db, exclude=()):
